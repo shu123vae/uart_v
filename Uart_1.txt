@@ -1,0 +1,258 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 2023/04/12 13:02:54
+// Design Name: 
+// Module Name: Uart
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module Uart(
+	Clk,
+	Rstn,
+	SerDataIn,
+	PalDataOut,
+	PalDataOutValid,
+	PalDataIn,
+	PalDataInPermit,
+	PalDataInEn,
+	SerDataOut
+	);
+	input Clk;
+	input Rstn;
+	input SerDataIn;
+	output PalDataInPermit;
+	output reg [8:0] PalDataOut;
+	output PalDataOutValid;
+	input [7:0] PalDataIn;
+	input PalDataInEn;
+	output reg SerDataOut;
+
+	reg SerDataInSync1,SerDataInSync2,SerDataInSync3;
+	reg Parity;
+	reg [2:0] RxState;
+	reg [5:0] GateClkCnt;
+	reg GateClk;
+	reg [3:0] RxSampleCnt;
+	reg [3:0] RxBitCnt;
+	reg [3:0] TxState;
+	reg [3:0] TxBitExtCnt;
+	reg [7:0] PalDataTemp;
+	reg [2:0] TxBitCnt;
+	reg TxBusy;
+	reg PalDataOutValidReg;
+
+	parameter StRxIdle=3'd0;
+	parameter StRxStartCheck=3'd1;
+	parameter StRxBit=3'd2;
+	parameter StRxGap=3'd3;
+	parameter StRxStp=3'd4;
+	
+	parameter StTxIdle=3'd0;
+	parameter StTxStartBit=3'd1;
+	parameter StTxBit=3'd2;
+	parameter StTxParity=3'd3;
+	parameter StTxStpBit=3'd4;
+	parameter StTxIntervl=3'd5;
+	
+		
+	always@(posedge Clk or negedge Rstn)begin
+		if(!Rstn)begin
+			GateClkCnt<=4'd0;
+			GateClk<=1'd0;
+			end
+		else begin
+			if(GateClkCnt>=6'd62)begin
+				GateClkCnt<=6'd0;
+				GateClk<=1'b1;
+				end
+			else begin
+				GateClkCnt<=GateClkCnt+6'd1;
+				GateClk<=1'b0;
+				end			
+			end
+		end
+	
+	always@(posedge Clk or negedge Rstn)begin
+		if(!Rstn)begin
+			SerDataInSync1<=1'b1;
+			SerDataInSync2<=1'b1;
+			SerDataInSync3<=1'b1;
+			end
+		else begin
+			SerDataInSync1<=SerDataIn;
+			SerDataInSync2<=SerDataInSync1;
+			SerDataInSync3<=SerDataInSync2;						
+			end
+		end
+	
+	always@(posedge Clk or negedge Rstn)begin
+		if(!Rstn)begin
+			RxState<=StRxIdle;
+			RxSampleCnt<=4'd0;
+			RxBitCnt<=4'd0;
+			PalDataOut<=9'd0;
+			PalDataOutValidReg<=1'b0;					
+			end			
+//		else if(GateClk) begin
+		else begin		
+			case(RxState)
+				StRxIdle:begin
+					if(SerDataInSync3==1'b0)begin
+						RxState<=StRxStartCheck;
+						RxSampleCnt<=4'd0;
+						end
+					PalDataOutValidReg<=1'b0;
+					end					
+				StRxStartCheck:begin
+					if(RxSampleCnt==4'd7)begin
+						if(SerDataInSync3==1'b1)begin
+							RxState<=StRxIdle;
+							end
+						else begin
+							RxState<=StRxBit;
+							end
+						RxSampleCnt<=4'd0;
+						end	
+					else begin						
+						RxSampleCnt<=RxSampleCnt+4'd1;
+						end						
+					end																										
+				StRxBit:begin
+					if(RxSampleCnt==4'd15)begin
+						if(RxBitCnt<=4'd7)begin
+							PalDataOut<={SerDataInSync3,PalDataOut[8:1]};
+							RxBitCnt<=RxBitCnt+4'd1;
+							end
+						else begin
+							PalDataOut<={SerDataInSync3,PalDataOut[8:1]};
+							RxBitCnt<=4'd0;
+							RxState<=StRxGap;							
+							end
+						end
+					RxSampleCnt<=RxSampleCnt+4'd1;
+					end											
+				StRxGap:begin
+					if(RxSampleCnt>=4'd0)begin
+						RxState<= StRxStp;
+						RxSampleCnt<=4'd0;
+						end
+					else begin
+						RxSampleCnt<=RxSampleCnt+4'd1;
+						end
+					end				
+				StRxStp:begin
+					if(RxSampleCnt>=4'd15)begin							
+						RxState<=StRxIdle;
+						PalDataOutValidReg<=1'b1;
+						end
+					RxSampleCnt<=RxSampleCnt+4'd1;				
+					end
+																
+				default:begin
+					RxState<=StRxIdle;
+					RxSampleCnt<=4'd0;
+					RxBitCnt<=4'd0;
+					PalDataOut<=9'd0;
+					PalDataOutValidReg<=1'b0;					
+					end
+				endcase
+			end
+		end
+							
+		always@(posedge Clk or negedge Rstn)begin
+			if(!Rstn)begin
+				TxState<=4'd0;
+				TxBitExtCnt<=4'd0;
+				TxBitCnt<=3'd0;
+				SerDataOut<=1'b1;
+				PalDataTemp<=8'd0;
+				TxBusy<=1'b0;
+				Parity<=1'b0;
+				end
+//			else if(GateClk) begin
+			else begin
+				case(TxState)
+					StTxIdle:begin
+						if(PalDataInEn==1'b1)begin
+							TxState<=StTxStartBit;
+							TxBusy<=1'b1;
+							Parity<=~^PalDataIn;
+							PalDataTemp<=PalDataIn;
+							SerDataOut<=1'b0;	
+							end
+						end								
+					StTxStartBit:begin
+						if(TxBitExtCnt==4'd15)begin
+							{PalDataTemp[6:0],SerDataOut}<=PalDataTemp[7:0];
+							TxState<=StTxBit;
+							end
+						TxBitExtCnt<=TxBitExtCnt+4'd1;																
+						end							
+					StTxBit:begin
+						if(TxBitExtCnt==4'd15)begin
+							if(TxBitCnt<=3'd6)begin
+								{PalDataTemp[6:0],SerDataOut}<=PalDataTemp[7:0];
+								TxBitCnt<=TxBitCnt+3'd1;
+								end
+							else begin
+								TxBitCnt<=3'd0;
+								SerDataOut<=Parity;
+								TxState<=StTxParity;
+								end										
+							end
+						TxBitExtCnt<=TxBitExtCnt+4'd1;								
+						end
+					StTxParity:begin
+						if(TxBitExtCnt==4'd15)begin
+							SerDataOut<=1'b1;
+							TxState<=StTxStpBit;										
+							end
+						TxBitExtCnt<=TxBitExtCnt+4'd1;								
+						end
+					StTxStpBit:begin
+						if(TxBitExtCnt==4'd15)begin
+							TxState<=StTxIntervl;										
+							end
+						TxBitExtCnt<=TxBitExtCnt+4'd1;	
+						end
+					StTxIntervl:begin
+						if(TxBitExtCnt==4'd15)begin
+							if(TxBitCnt<=3'd4)begin
+								TxBitCnt<=TxBitCnt+3'd1;
+								end
+							else begin
+								TxBitCnt<=3'd0;
+								TxBusy<=1'b0;
+								TxState<=StTxIdle;
+								end										
+							end
+						TxBitExtCnt<=TxBitExtCnt+4'd1;
+						end
+					default:begin
+						TxState<=4'd0;
+						TxBitExtCnt<=4'd0;
+						TxBitCnt<=3'd0;
+						SerDataOut<=1'b1;
+						PalDataTemp<=8'd0;
+						end
+					endcase
+				end				
+			end
+			
+		assign PalDataOutValid=/*GateClk&*/PalDataOutValidReg;
+		assign PalDataInPermit=/*GateClk&*/(~TxBusy);
+endmodule		
